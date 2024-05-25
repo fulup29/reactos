@@ -85,34 +85,22 @@ PWND FASTCALL IntGetWindowObject(HWND hWnd)
 
 PWND FASTCALL VerifyWnd(PWND pWnd)
 {
-   HWND hWnd;
-   UINT State, State2;
-   ULONG Error;
+    ULONG Error;
 
-   if (!pWnd) return NULL;
+    if (!pWnd ||
+        (pWnd->state & WNDS_DESTROYED) ||
+        (pWnd->state2 & WNDS2_INDESTROY))
+    {
+        return NULL;
+    }
 
-   Error = EngGetLastError();
+    Error = EngGetLastError();
 
-   _SEH2_TRY
-   {
-      hWnd = UserHMGetHandle(pWnd);
-      State = pWnd->state;
-      State2 = pWnd->state2;
-   }
-   _SEH2_EXCEPT(EXCEPTION_EXECUTE_HANDLER)
-   {
-      EngSetLastError(Error);
-      _SEH2_YIELD(return NULL);
-   }
-   _SEH2_END
+    if (UserObjectInDestroy(UserHMGetHandle(pWnd)))
+        pWnd = NULL;
 
-   if ( UserObjectInDestroy(hWnd) ||
-        State & WNDS_DESTROYED ||
-        State2 & WNDS2_INDESTROY )
-      pWnd = NULL;
-
-   EngSetLastError(Error);
-   return pWnd;
+    EngSetLastError(Error);
+    return pWnd;
 }
 
 PWND FASTCALL ValidateHwndNoErr(HWND hWnd)
@@ -2856,6 +2844,15 @@ BOOLEAN co_UserDestroyWindow(PVOID Object)
    PWND Window = Object;
 
    ASSERT_REFS_CO(Window); // FIXME: Temp HACK?
+
+   /* NtUserDestroyWindow does check if the window has already been destroyed
+      but co_UserDestroyWindow can be called from more paths which means
+      that it can also be called for a window that has already been destroyed. */
+   if (!IntIsWindow(UserHMGetHandle(Window)))
+   {
+      TRACE("Tried to destroy a window twice\n");
+      return TRUE;
+   }
 
    hWnd = Window->head.h;
    ti = PsGetCurrentThreadWin32Thread();
